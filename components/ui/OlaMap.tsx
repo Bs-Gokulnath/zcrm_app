@@ -268,6 +268,8 @@ function MarkerCard({ marker, onClose, onViewDetail }: {
 export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
   const webRef = useRef<WebView>(null);
   const mapReady = useRef(false);
+  // Always keep the latest markers accessible without stale closures
+  const markersRef = useRef<MapMarker[]>(markers);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MapMarker | null>(null);
@@ -278,14 +280,18 @@ export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
     const features = list.map(m => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [m.longitude, m.latitude] },
-      properties: {
-        id: m.id, status: m.status ?? '', groupName: m.groupName ?? '',
-      },
+      properties: { id: m.id, status: m.status ?? '', groupName: m.groupName ?? '' },
     }));
-    webRef.current.postMessage(JSON.stringify({ type: 'SET_MARKERS', features }));
+    // injectJavaScript is more reliable than postMessage on mobile WebViews
+    webRef.current.injectJavaScript(
+      `try{addMarkers(${JSON.stringify(features)})}catch(e){};true;`
+    );
   }
 
-  useEffect(() => { sendMarkers(markers); }, [markers]);
+  useEffect(() => {
+    markersRef.current = markers;
+    sendMarkers(markers);
+  }, [markers]);
 
   function handleMessage(e: { nativeEvent: { data: string } }) {
     try {
@@ -293,14 +299,15 @@ export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
       if (msg.type === 'MAP_READY') {
         mapReady.current = true;
         setLoading(false);
-        sendMarkers(markers);
+        // Use ref so we always send the latest markers, not the stale closure value
+        sendMarkers(markersRef.current);
       }
       if (msg.type === 'MAP_ERROR') {
         setLoading(false);
         setError(msg.message);
       }
       if (msg.type === 'MARKER_PRESS') {
-        const m = markers.find(x => x.id === msg.id);
+        const m = markersRef.current.find(x => x.id === msg.id);
         if (m) {
           const marker = { ...m, latitude: msg.lat, longitude: msg.lng };
           if (onMarkerPress) {

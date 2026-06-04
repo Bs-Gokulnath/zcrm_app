@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { LayoutGrid, MapPin, Briefcase, Shield } from 'lucide-react-native';
+import { Briefcase, LayoutGrid, MapPin, Home, Shield } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 
 export default function AppLayout() {
@@ -16,10 +16,18 @@ export default function AppLayout() {
           borderTopColor: '#f1f5f9',
           borderTopWidth: 1,
           paddingBottom: 4,
+          height: 60,
         },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
       }}
     >
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="index"
         options={{
@@ -49,6 +57,9 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size }) => <Shield size={size} color={color} />,
         }}
       />
+      {/* Hidden from tab bar — accessible via header or links */}
+      <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen name="workspaces" options={{ href: null }} />
     </Tabs>
   );
 }
