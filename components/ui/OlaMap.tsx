@@ -61,7 +61,11 @@ function buildHTML(apiKey: string): string {
 <script>
 var KEY = '${apiKey}';
 var STATUS = document.getElementById('status');
-function post(o){ try{ window.ReactNativeWebView.postMessage(JSON.stringify(o)); }catch(e){} }
+function post(o){
+  var s=JSON.stringify(o);
+  try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(s); }catch(e){}
+  try{ window.parent.postMessage(s,'*'); }catch(e){}
+}
 
 var map = new maplibregl.Map({
   container:'map',
@@ -268,7 +272,6 @@ function MarkerCard({ marker, onClose, onViewDetail }: {
 export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
   const webRef = useRef<WebView>(null);
   const mapReady = useRef(false);
-  // Always keep the latest markers accessible without stale closures
   const markersRef = useRef<MapMarker[]>(markers);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -282,7 +285,6 @@ export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
       geometry: { type: 'Point', coordinates: [m.longitude, m.latitude] },
       properties: { id: m.id, status: m.status ?? '', groupName: m.groupName ?? '' },
     }));
-    // injectJavaScript is more reliable than postMessage on mobile WebViews
     webRef.current.injectJavaScript(
       `try{addMarkers(${JSON.stringify(features)})}catch(e){};true;`
     );
@@ -299,23 +301,15 @@ export function OlaMap({ markers = [], style, onMarkerPress }: OlaMapProps) {
       if (msg.type === 'MAP_READY') {
         mapReady.current = true;
         setLoading(false);
-        // Use ref so we always send the latest markers, not the stale closure value
         sendMarkers(markersRef.current);
       }
-      if (msg.type === 'MAP_ERROR') {
-        setLoading(false);
-        setError(msg.message);
-      }
+      if (msg.type === 'MAP_ERROR') { setLoading(false); setError(msg.message); }
       if (msg.type === 'MARKER_PRESS') {
         const m = markersRef.current.find(x => x.id === msg.id);
         if (m) {
           const marker = { ...m, latitude: msg.lat, longitude: msg.lng };
-          if (onMarkerPress) {
-            onMarkerPress(marker);
-          } else {
-            setSelected(marker);
-            setShowDetail(false);
-          }
+          if (onMarkerPress) onMarkerPress(marker);
+          else { setSelected(marker); setShowDetail(false); }
         }
       }
     } catch {}

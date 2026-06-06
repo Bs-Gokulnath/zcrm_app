@@ -1,17 +1,23 @@
-import React from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LogOut, Mail, Shield, User } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
+  const [confirming, setConfirming] = useState(false);
 
   function handleLogout() {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: logout },
-    ]);
+    if (Platform.OS === 'web') {
+      setConfirming(true);
+    } else {
+      const { Alert } = require('react-native');
+      Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign Out', style: 'destructive', onPress: logout },
+      ]);
+    }
   }
 
   const initials = user?.name
@@ -23,6 +29,33 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
+      {confirming && (
+        <Modal transparent animationType="fade" onRequestClose={() => setConfirming(false)}>
+          <Pressable
+            className="flex-1 bg-black/40 items-center justify-center px-8"
+            onPress={() => setConfirming(false)}
+          >
+            <Pressable className="bg-white rounded-2xl w-full p-6" onPress={() => {}}>
+              <Text className="text-lg font-bold text-gray-900 mb-1">Sign Out</Text>
+              <Text className="text-sm text-gray-500 mb-5">Are you sure you want to sign out?</Text>
+              <View className="flex-row gap-3">
+                <TouchableOpacity
+                  onPress={() => setConfirming(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 items-center"
+                >
+                  <Text className="text-sm font-semibold text-gray-700">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { setConfirming(false); logout(); }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-500 items-center"
+                >
+                  <Text className="text-sm font-semibold text-white">Sign Out</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
       <View className="px-4 pt-2 pb-3 bg-white border-b border-gray-100">
         <Text className="text-xl font-bold text-gray-900">Profile</Text>
       </View>

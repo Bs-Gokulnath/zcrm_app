@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Alert, FlatList, Modal, RefreshControl, ScrollView, StyleSheet,
+  Alert, FlatList, Modal, Platform, RefreshControl, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View, ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, ChevronDown, ChevronRight, Copy, FileSpreadsheet, Images,
+  ArrowLeft, ChevronDown, ChevronRight, Copy, FileSpreadsheet, Filter, Images,
   LayoutGrid, Lock, Map, MoreVertical,
-  Plus, Settings, Trash2, UserPlus, Users, X,
+  Plus, Search, Settings, Trash2, UserPlus, Users, X,
 } from 'lucide-react-native';
 import { ItemCard } from '../../components/boards/ItemCard';
 import { ItemDetailModal } from '../../components/boards/ItemDetailModal';
@@ -24,6 +24,63 @@ import { groupsApi, type BoardItem, type BoardGroup } from '../../services/board
 import { resolveItem } from '../../services/geocoding';
 
 type BoardTab = 'table' | 'map' | 'files';
+
+function confirmAlert(title: string, message: string, destructiveLabel: string, onConfirm: () => void) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: destructiveLabel, style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+}
+
+function showError(message: string) {
+  if (Platform.OS === 'web') window.alert(message);
+  else Alert.alert('Error', message);
+}
+
+type FilterOpt = string | { label: string; value: string; color?: string };
+
+function FilterSection({
+  label, options, selected, onSelect,
+}: {
+  label: string; options: FilterOpt[]; selected: string; onSelect: (v: string) => void;
+}) {
+  return (
+    <View style={{ marginTop: 20 }}>
+      <Text style={{ fontSize: 11, fontWeight: '700', color: '#676879', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+        {label}
+      </Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {options.map((opt) => {
+          const value = typeof opt === 'string' ? opt : opt.value;
+          const optLabel = typeof opt === 'string' ? opt : opt.label;
+          const color = typeof opt === 'object' ? opt.color : undefined;
+          const active = selected === value;
+          return (
+            <TouchableOpacity
+              key={value}
+              onPress={() => onSelect(active ? '' : value)}
+              style={{
+                paddingHorizontal: 13, paddingVertical: 7, borderRadius: 99, borderWidth: 1.5,
+                borderColor: active ? (color || '#0073EA') : '#e0e0e0',
+                backgroundColor: active ? (color ? color + '22' : '#e8f2ff') : '#f9fafb',
+                flexDirection: 'row', alignItems: 'center', gap: 5,
+              }}
+            >
+              {color ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} /> : null}
+              <Text style={{ fontSize: 13, fontWeight: active ? '700' : '500', color: active ? (color || '#0073EA') : '#374151' }}>
+                {optLabel}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 export default function BoardScreen() {
   const { id: boardId } = useLocalSearchParams<{ id: string }>();
@@ -55,6 +112,14 @@ export default function BoardScreen() {
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState({ done: 0, total: 0 });
 
+  // Filter state
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [filterGroupId, setFilterGroupId] = useState('');
+  const [filterState, setFilterState] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+
   const { data: boardData } = useQuery({
     queryKey: ['board', boardId],
     queryFn: () => boardsApi.getOne(boardId),
@@ -79,6 +144,55 @@ export default function BoardScreen() {
   const allItems = groups.flatMap((g) => g.items.map((item) => ({ item, group: g })));
   const filesItems = allItems.filter(({ item }) => item.files);
 
+  // Distinct values for filter dropdowns
+  const statuses = useMemo(() =>
+    [...new Set(allItems.map(({ item }) => item.status).filter(Boolean) as string[])].sort(),
+    [allItems]);
+  const priorities = useMemo(() =>
+    [...new Set(allItems.map(({ item }) => item.priority).filter(Boolean) as string[])].sort(),
+    [allItems]);
+  const stateValues = useMemo(() =>
+    [...new Set(allItems.map(({ item }) => item.state).filter(Boolean) as string[])].sort(),
+    [allItems]);
+
+  const activeFilterCount = [filterStatus, filterPriority, filterGroupId, filterState, searchText].filter(Boolean).length;
+
+  function clearFilters() {
+    setSearchText(''); setFilterStatus(''); setFilterPriority('');
+    setFilterGroupId(''); setFilterState('');
+  }
+
+  // Filtered groups for table view
+  const filteredGroups = useMemo(() =>
+    groups
+      .map(g => ({
+        ...g,
+        items: g.items.filter(item => {
+          if (searchText && !item.name.toLowerCase().includes(searchText.toLowerCase())) return false;
+          if (filterStatus && item.status !== filterStatus) return false;
+          if (filterPriority && item.priority !== filterPriority) return false;
+          if (filterGroupId && g.id !== filterGroupId) return false;
+          if (filterState && item.state !== filterState) return false;
+          return true;
+        }),
+      }))
+      .filter(g => !filterGroupId || g.id === filterGroupId),
+    [groups, searchText, filterStatus, filterPriority, filterGroupId, filterState]);
+
+  // Filtered markers for map view
+  const displayMarkers = useMemo(() => {
+    if (activeFilterCount === 0) return mapMarkers;
+    const grpName = filterGroupId ? groups.find(g => g.id === filterGroupId)?.name : null;
+    return mapMarkers.filter(m => {
+      if (searchText && !m.title.toLowerCase().includes(searchText.toLowerCase())) return false;
+      if (filterStatus && m.status !== filterStatus) return false;
+      if (filterPriority && m.priority !== filterPriority) return false;
+      if (grpName && m.groupName !== grpName) return false;
+      if (filterState && m.state !== filterState) return false;
+      return true;
+    });
+  }, [mapMarkers, searchText, filterStatus, filterPriority, filterGroupId, filterState, groups, activeFilterCount]);
+
   // Mutations
   const addGroupMutation = useMutation({
     mutationFn: () => groupsApi.create(boardId, newGroupName.trim()),
@@ -87,13 +201,13 @@ export default function BoardScreen() {
       setShowAddGroup(false);
       setNewGroupName('');
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const deleteGroupMutation = useMutation({
     mutationFn: (groupId: string) => groupsApi.delete(boardId, groupId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['board-groups', boardId] }),
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const addItemMutation = useMutation({
@@ -104,7 +218,7 @@ export default function BoardScreen() {
       setAddingItemToGroup(null);
       setNewItemName('');
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const deleteItemMutation = useMutation({
@@ -114,7 +228,7 @@ export default function BoardScreen() {
       queryClient.invalidateQueries({ queryKey: ['board-groups', boardId] });
       setSelectedItem(null);
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const archiveMutation = useMutation({
@@ -124,7 +238,7 @@ export default function BoardScreen() {
       queryClient.invalidateQueries({ queryKey: ['boards'] });
       router.canGoBack() ? router.back() : router.replace('/(app)');
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const deleteMutation = useMutation({
@@ -134,7 +248,7 @@ export default function BoardScreen() {
       queryClient.invalidateQueries({ queryKey: ['boards'] });
       router.canGoBack() ? router.back() : router.replace('/(app)');
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const duplicateMutation = useMutation({
@@ -146,7 +260,7 @@ export default function BoardScreen() {
       const newBoard = (res as any)?.data ?? res;
       if (newBoard?.id) router.push(`/board/${newBoard.id}`);
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const updateBoardMutation = useMutation({
@@ -157,7 +271,7 @@ export default function BoardScreen() {
       queryClient.invalidateQueries({ queryKey: ['board', boardId] });
       queryClient.invalidateQueries({ queryKey: ['boards'] });
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const addMemberMutation = useMutation({
@@ -168,13 +282,13 @@ export default function BoardScreen() {
       setInviteRole('VIEWER');
       refetchMembers();
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   const removeMemberMutation = useMutation({
     mutationFn: (memberId: string) => boardsApi.removeMember(boardId, memberId),
     onSuccess: () => refetchMembers(),
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => showError(e.message),
   });
 
   function toggleGroup(groupId: string) {
@@ -186,28 +300,18 @@ export default function BoardScreen() {
   }
 
   function handleDeleteGroup(group: BoardGroup) {
-    Alert.alert(
-      'Delete Group',
-      `Delete "${group.name}" and all its items?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteGroupMutation.mutate(group.id) },
-      ],
-    );
+    confirmAlert('Delete Group', `Delete "${group.name}" and all its items?`, 'Delete', () =>
+      deleteGroupMutation.mutate(group.id));
   }
 
   function handleArchive() {
-    Alert.alert('Archive Board', 'Archive this board? You can restore it later.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Archive', onPress: () => archiveMutation.mutate() },
-    ]);
+    confirmAlert('Archive Board', 'Archive this board? You can restore it later.', 'Archive', () =>
+      archiveMutation.mutate());
   }
 
   function handleDelete() {
-    Alert.alert('Delete Board', 'Move this board to trash?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate() },
-    ]);
+    confirmAlert('Delete Board', 'Move this board to trash?', 'Delete', () =>
+      deleteMutation.mutate());
   }
 
   function openEditBoard() {
@@ -225,10 +329,8 @@ export default function BoardScreen() {
   }
 
   function handleRemoveMember(member: BoardMember) {
-    Alert.alert('Remove Member', `Remove ${member.user.name} from this board?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => removeMemberMutation.mutate(member.id) },
-    ]);
+    confirmAlert('Remove Member', `Remove ${member.user.name} from this board?`, 'Remove', () =>
+      removeMemberMutation.mutate(member.id));
   }
 
   useEffect(() => {
@@ -238,28 +340,38 @@ export default function BoardScreen() {
     setGeoProgress({ done: 0, total: allItems.length });
 
     (async () => {
-      const markers: MapMarker[] = [];
+      const BATCH = 12;
+      const total = allItems.length;
       let done = 0;
-      for (const { item, group } of allItems) {
+      let accumulated: MapMarker[] = [];
+
+      for (let i = 0; i < allItems.length; i += BATCH) {
         if (cancelled) break;
-        const coords = await resolveItem(item);
-        done++;
-        if (!cancelled) setGeoProgress({ done, total: allItems.length });
-        if (coords) {
-          markers.push({
-            id: item.id, latitude: coords[0], longitude: coords[1],
-            title: item.name, city: item.city, state: item.state,
-            location: item.location, status: item.status, priority: item.priority,
-            owner: item.owner, phone: item.phone, email: item.email,
-            investment: item.investment, powerAvailability: item.powerAvailability,
-            availableParking: item.availableParking, propertyType: item.propertyType,
-            googleRating: item.googleRating, noOfRatings: item.noOfRatings,
-            landOwnerContact: item.landOwnerContact, notes: item.notes,
-            groupName: group.name, groupColor: group.color,
-          });
-        }
+        const batch = allItems.slice(i, i + BATCH);
+        const results = await Promise.all(
+          batch.map(async ({ item, group }) => {
+            const coords = await resolveItem(item);
+            return coords ? { item, group, coords } : null;
+          })
+        );
+        if (cancelled) break;
+        done += batch.length;
+        const newMarkers = (results.filter(Boolean) as NonNullable<typeof results[0]>[]).map(({ item, group, coords }) => ({
+          id: item.id, latitude: coords[0], longitude: coords[1],
+          title: item.name, city: item.city, state: item.state,
+          location: item.location, status: item.status, priority: item.priority,
+          owner: item.owner, phone: item.phone, email: item.email,
+          investment: item.investment, powerAvailability: item.powerAvailability,
+          availableParking: item.availableParking, propertyType: item.propertyType,
+          googleRating: item.googleRating, noOfRatings: item.noOfRatings,
+          landOwnerContact: item.landOwnerContact, notes: item.notes,
+          groupName: group.name, groupColor: group.color,
+        }));
+        accumulated = [...accumulated, ...newMarkers];
+        setGeoProgress({ done, total });
+        setMapMarkers([...accumulated]);
       }
-      if (!cancelled) { setMapMarkers(markers); setGeocoding(false); }
+      if (!cancelled) setGeocoding(false);
     })();
 
     return () => { cancelled = true; };
@@ -335,27 +447,103 @@ export default function BoardScreen() {
         ))}
       </View>
 
+      {/* Filter bar */}
+      {(activeTab === 'table' || activeTab === 'map') && (
+        <View style={filterStyles.bar}>
+          <View style={filterStyles.searchWrap}>
+            <Search size={13} color="#9ca3af" />
+            <TextInput
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder="Search items..."
+              placeholderTextColor="#9ca3af"
+              style={filterStyles.searchInput}
+              returnKeyType="search"
+            />
+            {searchText.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchText('')}>
+                <X size={13} color="#9ca3af" />
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowFilters(true)}
+            style={[filterStyles.filterBtn, activeFilterCount > 0 && filterStyles.filterBtnActive]}
+          >
+            <Filter size={13} color={activeFilterCount > 0 ? '#fff' : '#374151'} />
+            {activeFilterCount > 0 && (
+              <View style={filterStyles.badge}>
+                <Text style={filterStyles.badgeText}>{activeFilterCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+      {/* Active filter chips */}
+      {(activeTab === 'table' || activeTab === 'map') && activeFilterCount > 0 && (
+        <ScrollView
+          horizontal showsHorizontalScrollIndicator={false}
+          style={filterStyles.chipsBar}
+          contentContainerStyle={filterStyles.chipsContent}
+        >
+          {filterStatus ? (
+            <TouchableOpacity style={filterStyles.chip} onPress={() => setFilterStatus('')}>
+              <Text style={filterStyles.chipText}>Status: {filterStatus}</Text>
+              <X size={10} color="#0073EA" />
+            </TouchableOpacity>
+          ) : null}
+          {filterPriority ? (
+            <TouchableOpacity style={filterStyles.chip} onPress={() => setFilterPriority('')}>
+              <Text style={filterStyles.chipText}>Priority: {filterPriority}</Text>
+              <X size={10} color="#0073EA" />
+            </TouchableOpacity>
+          ) : null}
+          {filterGroupId ? (
+            <TouchableOpacity style={filterStyles.chip} onPress={() => setFilterGroupId('')}>
+              <Text style={filterStyles.chipText}>Group: {groups.find(g => g.id === filterGroupId)?.name}</Text>
+              <X size={10} color="#0073EA" />
+            </TouchableOpacity>
+          ) : null}
+          {filterState ? (
+            <TouchableOpacity style={filterStyles.chip} onPress={() => setFilterState('')}>
+              <Text style={filterStyles.chipText}>State: {filterState}</Text>
+              <X size={10} color="#0073EA" />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity style={filterStyles.clearChip} onPress={clearFilters}>
+            <Text style={filterStyles.clearChipText}>Clear all</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
       {/* Map tab */}
       {activeTab === 'map' && (
         <View style={boardStyles.mapContainer}>
-          {geocoding ? (
+          <OlaMap markers={displayMarkers} style={StyleSheet.absoluteFillObject} />
+          {geocoding && (
             <View style={boardStyles.geocodingOverlay}>
-              <ActivityIndicator size="large" color="#0073EA" />
-              <Text style={boardStyles.geocodingTitle}>Plotting locations…</Text>
-              <View style={boardStyles.progressBar}>
-                <View style={[boardStyles.progressFill, {
-                  width: geoProgress.total > 0 ? `${(geoProgress.done / geoProgress.total) * 100}%` : '0%'
-                } as any]} />
+              <ActivityIndicator size="small" color="#0073EA" />
+              <View style={{ flex: 1, gap: 4 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={boardStyles.geocodingTitle}>Plotting locations…</Text>
+                  <Text style={boardStyles.geocodingCount}>
+                    {geoProgress.done}/{geoProgress.total}
+                    {mapMarkers.length > 0 ? `  ·  ${mapMarkers.length} on map` : ''}
+                  </Text>
+                </View>
+                <View style={boardStyles.progressBar}>
+                  <View style={[boardStyles.progressFill, {
+                    width: geoProgress.total > 0 ? `${(geoProgress.done / geoProgress.total) * 100}%` : '0%'
+                  } as any]} />
+                </View>
               </View>
-              <Text style={boardStyles.geocodingCount}>{geoProgress.done} / {geoProgress.total} items</Text>
             </View>
-          ) : (
-            <OlaMap markers={mapMarkers} style={StyleSheet.absoluteFillObject} />
           )}
-          {!geocoding && mapMarkers.length > 0 && (
+          {mapMarkers.length > 0 && (
             <View style={boardStyles.legend}>
               <Text style={boardStyles.legendTitle}>
-                {mapMarkers.length} / {allItems.length} plotted
+                {displayMarkers.length} / {allItems.length} plotted
+                {activeFilterCount > 0 ? ` (filtered)` : ''}
               </Text>
             </View>
           )}
@@ -387,9 +575,11 @@ export default function BoardScreen() {
         <LoadingSpinner message="Loading board..." />
       ) : activeTab === 'table' && groups.length === 0 ? (
         <EmptyState title="No groups yet" subtitle="Tap + to add your first group" />
+      ) : activeTab === 'table' && filteredGroups.every(g => g.items.length === 0) && activeFilterCount > 0 ? (
+        <EmptyState title="No items match filters" subtitle="Try adjusting or clearing your filters" />
       ) : activeTab === 'table' ? (
         <FlatList
-          data={groups}
+          data={filteredGroups}
           keyExtractor={(g) => g.id}
           contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
           refreshControl={
@@ -413,7 +603,9 @@ export default function BoardScreen() {
                     <Text style={{ color: group.color }} className="text-sm font-bold">
                       {group.name}
                     </Text>
-                    <Text className="text-xs text-gray-400">({group.items.length})</Text>
+                    <Text className="text-xs text-gray-400">
+                      ({group.items.length}{activeFilterCount > 0 ? `/${groups.find(g => g.id === group.id)?.items.length ?? group.items.length}` : ''})
+                    </Text>
                   </TouchableOpacity>
                   <View className="flex-row gap-1">
                     <TouchableOpacity
@@ -684,6 +876,45 @@ export default function BoardScreen() {
         </View>
       </Modal>
 
+      {/* Filter Modal */}
+      <Modal visible={showFilters} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setShowFilters(false)}>
+        <View style={{ flex: 1, backgroundColor: '#fff' }}>
+          <View style={filterStyles.sheetHeader}>
+            <Text style={filterStyles.sheetTitle}>Filter</Text>
+            <TouchableOpacity onPress={() => setShowFilters(false)}>
+              <X size={22} color="#374151" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
+            {statuses.length > 0 && (
+              <FilterSection label="Status" options={statuses} selected={filterStatus} onSelect={setFilterStatus} />
+            )}
+            {priorities.length > 0 && (
+              <FilterSection label="Priority" options={priorities} selected={filterPriority} onSelect={setFilterPriority} />
+            )}
+            {groups.length > 0 && (
+              <FilterSection
+                label="Group"
+                options={groups.map(g => ({ label: g.name, value: g.id, color: g.color }))}
+                selected={filterGroupId}
+                onSelect={setFilterGroupId}
+              />
+            )}
+            {stateValues.length > 0 && (
+              <FilterSection label="State" options={stateValues} selected={filterState} onSelect={setFilterState} />
+            )}
+          </ScrollView>
+          <View style={filterStyles.sheetFooter}>
+            <TouchableOpacity style={filterStyles.clearAllBtn} onPress={clearFilters}>
+              <Text style={filterStyles.clearAllText}>Clear all</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={filterStyles.applyBtn} onPress={() => setShowFilters(false)}>
+              <Text style={filterStyles.applyText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Import Modal */}
       <ImportModal
         visible={!!importGroup}
@@ -718,6 +949,29 @@ export default function BoardScreen() {
   );
 }
 
+const filterStyles = StyleSheet.create({
+  bar: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  searchWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#f5f6f8', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
+  searchInput: { flex: 1, fontSize: 13, color: '#323338', padding: 0 },
+  filterBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: '#f5f6f8' },
+  filterBtnActive: { backgroundColor: '#0073EA' },
+  badge: { backgroundColor: '#fff', borderRadius: 99, minWidth: 16, paddingHorizontal: 4, paddingVertical: 1, alignItems: 'center' },
+  badgeText: { fontSize: 10, fontWeight: '700', color: '#0073EA' },
+  chipsBar: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0', maxHeight: 40 },
+  chipsContent: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 7, gap: 6, alignItems: 'center' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: '#e8f2ff', borderWidth: 1, borderColor: '#bfdbfe' },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#0073EA' },
+  clearChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: '#f5f6f8', borderWidth: 1, borderColor: '#e0e0e0' },
+  clearChipText: { fontSize: 12, fontWeight: '500', color: '#676879' },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e6e9ef' },
+  sheetTitle: { fontSize: 17, fontWeight: '700', color: '#323338' },
+  sheetFooter: { flexDirection: 'row', gap: 12, padding: 16, borderTopWidth: 1, borderTopColor: '#e6e9ef' },
+  clearAllBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#f5f6f8', alignItems: 'center' },
+  clearAllText: { fontSize: 14, fontWeight: '600', color: '#676879' },
+  applyBtn: { flex: 2, paddingVertical: 13, borderRadius: 12, backgroundColor: '#0073EA', alignItems: 'center' },
+  applyText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+});
+
 const boardStyles = StyleSheet.create({
   tabBar: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e6e9ef', paddingHorizontal: 4 },
   tab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 3, borderBottomColor: 'transparent' },
@@ -725,11 +979,11 @@ const boardStyles = StyleSheet.create({
   tabText: { fontSize: 13, fontWeight: '500', color: '#676879' },
   tabTextActive: { color: '#0073EA', fontWeight: '700' },
   mapContainer: { flex: 1, position: 'relative' },
-  geocodingOverlay: { flex: 1, backgroundColor: 'rgba(255,255,255,0.95)', justifyContent: 'center', alignItems: 'center', gap: 14, padding: 24 },
-  geocodingTitle: { fontSize: 15, fontWeight: '600', color: '#323338' },
-  progressBar: { width: 260, height: 6, backgroundColor: '#E6E9EF', borderRadius: 99, overflow: 'hidden' },
+  geocodingOverlay: { position: 'absolute', bottom: 60, left: 16, right: 16, backgroundColor: 'rgba(255,255,255,0.97)', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 6 },
+  geocodingTitle: { fontSize: 13, fontWeight: '600', color: '#323338' },
+  progressBar: { flex: 1, height: 4, backgroundColor: '#E6E9EF', borderRadius: 99, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#0073EA', borderRadius: 99 },
-  geocodingCount: { fontSize: 13, color: '#676879' },
+  geocodingCount: { fontSize: 11, color: '#676879' },
   legend: { position: 'absolute', bottom: 24, left: 12, backgroundColor: 'rgba(255,255,255,0.97)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   legendTitle: { fontSize: 12, fontWeight: '600', color: '#323338' },
 });

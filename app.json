@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ZCRM",
-    "slug": "zcrm-mobile",
+    "slug": "zeon-work",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -45,7 +45,7 @@
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "1.9.25"
+            "kotlinVersion": "2.1.0"
           }
         }
       ]

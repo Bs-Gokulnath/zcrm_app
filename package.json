@@ -22,6 +22,7 @@
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "lucide-react-native": "^0.475.0",
+    "maplibre-gl": "^5.24.0",
     "nativewind": "^4.0.36",
     "react": "19.1.0",
     "react-dom": "19.1.0",

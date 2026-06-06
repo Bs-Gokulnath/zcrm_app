@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Alert, FlatList, Modal, RefreshControl,
+  Alert, FlatList, Modal, Platform, RefreshControl,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,20 +35,24 @@ export default function WorkspacesScreen() {
       setNewName('');
       setNewPrivacy('OPEN');
     },
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => Platform.OS === 'web' ? window.alert(e.message) : Alert.alert('Error', e.message),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => workspacesApi.remove(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspaces'] }),
-    onError: (e: Error) => Alert.alert('Error', e.message),
+    onError: (e: Error) => Platform.OS === 'web' ? window.alert(e.message) : Alert.alert('Error', e.message),
   });
 
   function handleDelete(ws: Workspace) {
-    Alert.alert('Delete Workspace', `Delete "${ws.name}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(ws.id) },
-    ]);
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete "${ws.name}"?\n\nThis cannot be undone.`)) deleteMutation.mutate(ws.id);
+    } else {
+      Alert.alert('Delete Workspace', `Delete "${ws.name}"? This cannot be undone.`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(ws.id) },
+      ]);
+    }
   }
 
   const all: Workspace[] = Array.isArray(data) ? data : (data as any)?.data ?? [];

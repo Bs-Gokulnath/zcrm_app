@@ -167,7 +167,8 @@ export function ItemDetailModal({
       const res = await groupsApi.updateItem(boardId, groupId, item.id, { [field]: value });
       onUpdate(res.data);
     } catch (e: unknown) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to update');
+      const msg = e instanceof Error ? e.message : 'Failed to update';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('Error', msg);
     } finally {
       setSaving(false);
     }
@@ -187,11 +188,15 @@ export function ItemDetailModal({
     }
   }
 
-  async function handleDelete() {
-    Alert.alert('Delete Item', 'Are you sure you want to delete this item?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: onDelete },
-    ]);
+  function handleDelete() {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this item?\n\nThis action cannot be undone.')) onDelete();
+    } else {
+      Alert.alert('Delete Item', 'Are you sure you want to delete this item?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: onDelete },
+      ]);
+    }
   }
 
   if (!item) return null;

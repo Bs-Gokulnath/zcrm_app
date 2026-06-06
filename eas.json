@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 14.0.0"
+    "version": ">= 14.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -17,7 +18,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://zcrm.zwiz.in:6443"
+        "EXPO_PUBLIC_API_URL": "https://zcrm.zwiz.in",
+        "EXPO_PUBLIC_OLA_MAPS_API_KEY": "GqiD8HJEWCj6UvTGRtqWcjMj8YMPnCuB9LaoPB9t",
+        "EXPO_PUBLIC_OLA_MAPS_PROJECT_ID": "5700b8de-bdd9-423a-87d7-9c6bfa627451"
       }
     },
     "production": {
